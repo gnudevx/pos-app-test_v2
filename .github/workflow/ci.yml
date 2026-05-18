@@ -1,0 +1,262 @@
+# .github/workflows/phase4-integration.yml
+#
+# Trigger: mỗi khi agent push feature branch (feat/task-*) hoặc manual dispatch
+#
+# Flow:
+#   ┌─────────────────────────────────────────────┐
+#   │  agent/feature branch push (feat/task-*)    │
+#   └──────────────────┬──────────────────────────┘
+#                      │
+#              [phase4-integration]
+#                      │
+#          4.1 Merge → 4.2 Contract → 4.3 Build
+#                      │
+#               4.4 Runtime (Docker)
+#                      │
+#               4.5 Self-Healing (nếu fail)
+#                      │
+#               4.6 Release Snapshot
+#                      │
+#          [notify] Slack / GitHub Summary
+
+name: Phase 4 — Integration Pipeline
+
+on:
+  # Agent push feature branch
+  push:
+    branches:
+      - develop
+
+  # Manual trigger (test / re-run sau khi healed)
+  workflow_dispatch:
+    inputs:
+      run_id_override:
+        description: "Override integration_run_id (optional)"
+        required: false
+        default: ""
+
+  # Ngăn race condition: chỉ chạy 1 run tại một thời điểm
+  # (dùng concurrency bên dưới)
+
+concurrency:
+  group: phase4-integration
+  cancel-in-progress: false   # KHÔNG cancel run đang chạy — queue lại
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Permissions
+# ─────────────────────────────────────────────────────────────────────────────
+permissions:
+  contents: write       # merge coordinator cần push integration branch
+  pull-requests: write  # comment kết quả lên PR nếu có
+  checks: write         # update check status
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Env chung
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Jobs
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Guard: chỉ chạy nếu docs/tasks.json có ít nhất 1 task PASSED
+  # Tránh trigger vô ích khi agent push WIP commit
+  # ───────────────────────────────────────────────────────────────────────────
+  guard:
+    name: "Guard — Check PASSED tasks"
+    runs-on: ubuntu-latest
+    outputs:
+      has_passed_tasks: ${{ steps.check.outputs.has_passed_tasks }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # cần full history để merge coordinator topo sort
+
+      - name: Check PASSED tasks in tasks.json
+        id: check
+        run: |
+          if [ ! -f docs/tasks.json ]; then
+            echo "has_passed_tasks=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::docs/tasks.json not found — skipping pipeline"
+            exit 0
+          fi
+          COUNT=$(python3 - <<'EOF'
+          import json, pathlib, sys
+          data = json.loads(pathlib.Path("docs/tasks.json").read_text())
+          passed = sum(
+              1
+              for sprint in data.get("sprints", [])
+              for task   in sprint.get("tasks", [])
+              if task.get("status") == "PASSED"
+          )
+          print(passed)
+          EOF
+          )
+          echo "PASSED task count: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_passed_tasks=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_passed_tasks=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Main: Phase 4 Integration Pipeline
+  # ───────────────────────────────────────────────────────────────────────────
+  integration:
+    name: "Phase 4 — Integration"
+    runs-on: ubuntu-latest
+    needs: guard
+    if: needs.guard.outputs.has_passed_tasks == 'true'
+
+    # Docker-in-Docker cần đặc quyền này
+    # (phase 4.4 runtime validation dùng docker compose)
+    env:
+      DOCKER_BUILDKIT: "1"
+      COMPOSE_DOCKER_CLI_BUILD: "1"
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Git identity cho merge coordinator ────────────────────────────────
+      - name: Configure Git identity
+        run: |
+          git config user.name  "phase4-bot"
+          git config user.email "phase4-bot@noreply.github.com"
+
+      # ── Python ────────────────────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── Node (frontend build trong 4.3) ───────────────────────────────────
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --prefer-offline
+
+      # ── Docker Compose ────────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify Docker Compose
+        run: docker compose version
+
+      # ── Run Phase 4 pipeline ──────────────────────────────────────────────
+      - name: Run integration pipeline
+        id: pipeline
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          RUN_ID_OVERRIDE: ${{ inputs.run_id_override }}
+        run: |
+          set +e
+          python scripts/phase4/integration_pipeline.py
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      # ── Upload manifest (luôn chạy, kể cả khi fail) ───────────────────────
+      - name: Upload integration manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-manifest-${{ github.run_id }}
+          path: docs/integration_manifest.json
+          retention-days: 30
+
+      # ── GitHub Job Summary ────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, pathlib, os
+
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          manifest_path = pathlib.Path("docs/integration_manifest.json")
+
+          if not manifest_path.exists():
+              with open(summary_file, "a") as f:
+                  f.write("## ⚠️ Phase 4 Integration\n\nManifest not found.\n")
+              exit(0)
+
+          data = json.loads(manifest_path.read_text())
+          phases = data.get("phases", [])
+          last_phase = phases[-1] if phases else {}
+          overall_ok = last_phase.get("ok", False) if last_phase else False
+          status_icon = "✅" if overall_ok else "❌"
+
+          lines = [
+              f"## {status_icon} Phase 4 Integration — `{data.get('integration_run_id', 'N/A')}`\n",
+              f"**Merge order**: {', '.join(data.get('merge_order', []))}\n",
+              "| Phase | Status |",
+              "|-------|--------|",
+          ]
+          for p in phases:
+              icon = "✅" if p.get("ok") else "❌"
+              lines.append(f"| `{p['phase']}` | {icon} |")
+
+          with open(summary_file, "a") as f:
+              f.write("\n".join(lines) + "\n")
+          EOF
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Notify: chạy sau integration, luôn report kết quả
+  # ───────────────────────────────────────────────────────────────────────────
+  notify:
+    name: "Notify result"
+    runs-on: ubuntu-latest
+    needs: integration
+    if: always()
+
+    steps:
+      - name: Download manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: integration-manifest-${{ github.run_id }}
+          path: docs/
+        continue-on-error: true   # manifest có thể không tồn tại nếu pipeline abort sớm
+
+      - name: Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ needs.integration.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          STATUS_EMOJI="✅"
+          if [ "$JOB_STATUS" != "success" ]; then
+            STATUS_EMOJI="❌"
+          fi
+          PAYLOAD=$(cat <<JSON
+          {
+            "text": "${STATUS_EMOJI} *Phase 4 Integration* — ${JOB_STATUS}\nBranch: \`${{ github.ref_name }}\`\n<${RUN_URL}|View run>"
+          }
+          JSON
+          )
+          curl -s -X POST -H 'Content-type: application/json' \
+               --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
