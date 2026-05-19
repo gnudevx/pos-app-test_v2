@@ -108,7 +108,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r app/src/backend/requirements.txt
-
+      - name: Install pipeline dependencies
+        run: |
+          pip install -r pipeline/requirements.txt
       - name: Run integration pipeline
         env:
           REPO_DIR: ${{ github.workspace }}/app
@@ -154,10 +156,6 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
 
       # ── Node (frontend build trong 4.3) ───────────────────────────────────
       - name: Set up Node ${{ env.NODE_VERSION }}
