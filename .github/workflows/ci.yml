@@ -107,7 +107,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r pipeline/requirements.txt
+          pip install -r app/src/backend/requirements.txt
 
       - name: Run integration pipeline
         env:
