@@ -92,6 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: app
+          token: ${{ secrets.PIPELINE_REPO_TOKEN }}
 
       - name: Checkout pipeline repo
         uses: actions/checkout@v4
@@ -111,6 +112,10 @@ jobs:
       - name: Install pipeline dependencies
         run: |
           pip install -r pipeline/requirements.txt
+      - name: Configure git
+        run: |
+          git config --global user.email "gnudevx@gmail.com"
+          git config --global user.name "gnudevx"
       - name: Run integration pipeline
         env:
           REPO_DIR: ${{ github.workspace }}/app
