@@ -69,6 +69,36 @@ jobs:
   # Guard: chỉ chạy nếu docs/tasks.json có ít nhất 1 task PASSED
   # Tránh trigger vô ích khi agent push WIP commit
   # ───────────────────────────────────────────────────────────────────────────
+  steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout pipeline repo
+        uses: actions/checkout@v4
+        with:
+          repository: gnudevx/pos-app-pipeline
+          path: pipeline
+          token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r pipeline/requirements.txt
+
+      - name: Run integration pipeline
+        env:
+          REPO_DIR: app
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          cd pipeline
+          python -m core.integration_pipeline
   guard:
     name: "Guard — Check integration branch"
     runs-on: ubuntu-latest
