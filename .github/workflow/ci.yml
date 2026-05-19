@@ -22,10 +22,10 @@
 name: Phase 4 — Integration Pipeline
 
 on:
-  # Agent push feature branch
+  # Trigger khi integration branch được tạo
   push:
     branches:
-      - develop
+      - "integration/**"
 
   # Manual trigger (test / re-run sau khi healed)
   workflow_dispatch:
@@ -39,14 +39,15 @@ on:
   # (dùng concurrency bên dưới)
 
 concurrency:
-  group: phase4-integration
-  cancel-in-progress: false   # KHÔNG cancel run đang chạy — queue lại
+  group: phase4-${{ github.ref_name }}
+  cancel-in-progress: false
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Permissions
 # ─────────────────────────────────────────────────────────────────────────────
 permissions:
-  contents: write       # merge coordinator cần push integration branch
+  contents: write       # self-healing push patch commit
   pull-requests: write  # comment kết quả lên PR nếu có
   checks: write         # update check status
 
@@ -69,42 +70,19 @@ jobs:
   # Tránh trigger vô ích khi agent push WIP commit
   # ───────────────────────────────────────────────────────────────────────────
   guard:
-    name: "Guard — Check PASSED tasks"
+    name: "Guard — Check integration branch"
     runs-on: ubuntu-latest
     outputs:
-      has_passed_tasks: ${{ steps.check.outputs.has_passed_tasks }}
+      should_run: ${{ steps.check.outputs.should_run }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # cần full history để merge coordinator topo sort
-
-      - name: Check PASSED tasks in tasks.json
+      - name: Check integration branch
         id: check
         run: |
-          if [ ! -f docs/tasks.json ]; then
-            echo "has_passed_tasks=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::docs/tasks.json not found — skipping pipeline"
-            exit 0
-          fi
-          COUNT=$(python3 - <<'EOF'
-          import json, pathlib, sys
-          data = json.loads(pathlib.Path("docs/tasks.json").read_text())
-          passed = sum(
-              1
-              for sprint in data.get("sprints", [])
-              for task   in sprint.get("tasks", [])
-              if task.get("status") == "PASSED"
-          )
-          print(passed)
-          EOF
-          )
-          echo "PASSED task count: $COUNT"
-          if [ "$COUNT" -gt 0 ]; then
-            echo "has_passed_tasks=true" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.ref_name }}" =~ ^integration/ ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_passed_tasks=false" >> "$GITHUB_OUTPUT"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -133,8 +111,8 @@ jobs:
       # ── Git identity cho merge coordinator ────────────────────────────────
       - name: Configure Git identity
         run: |
-          git config user.name  "phase4-bot"
-          git config user.email "phase4-bot@noreply.github.com"
+          git config user.name  "gnudevx"
+          git config user.email "gnudevx@gmail.com"
 
       # ── Python ────────────────────────────────────────────────────────────
       - name: Set up Python ${{ env.PYTHON_VERSION }}
