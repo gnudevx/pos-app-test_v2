@@ -1,6 +1,5 @@
 import React from 'react'
 
-// [ROUTES_SLOT]
 // Dev agent: add page imports and routing here.
 // Example:
 //   import CartPage from './pages/CartPage'
