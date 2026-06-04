@@ -1,0 +1,11 @@
+/src/frontend/.env
+/.venv
+/src/frontend/package-lock.json
+/src/frontend/node_modules
+/src/frontend/dist
+/src/service/_pycache__
+/src/app/_pycache__
+/src/app/venv
+/src/app/node_modules
+/src/service/*
+/src/app/__init__.py

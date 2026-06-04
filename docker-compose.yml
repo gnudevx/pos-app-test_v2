@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # Frontend - React + Vite
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./src/frontend:/app     # mount đúng path
+      - /app/node_modules       # bảo vệ node_modules
+    environment:
+      - VITE_API_AUTH=http://auth:8001
+      - VITE_API_PRODUCTS=http://products:8002
+      - VITE_API_CART=http://cart:8003
+      - VITE_API_INVENTORY=http://inventory:8004
+      - VITE_API_ORDERS=http://orders:8005
+      - VITE_API_CHECKOUT=http://checkout:8006
+    depends_on:
+      - auth
+      - products
+      - cart
+      - inventory
+      - orders
+      - checkout
+    networks:
+      - pos_network
+
+  # Auth Backend - FastAPI
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8001:8000"
+    container_name: pos_auth_backend
+    working_dir: /app/src/services/auth_backend
+    volumes:
+      - ./src/services/auth_backend:/app/src/services/auth_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+  # Product Catalog Backend - FastAPI
+  products:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8002:8000"
+    container_name: pos_products_backend
+    working_dir: /app/src/services/product_catalog_backend
+    volumes:
+      - ./src/services/product_catalog_backend:/app/src/services/product_catalog_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+  # Shopping Cart Backend - FastAPI
+  cart:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8003:8000"
+    container_name: pos_cart_backend
+    working_dir: /app/src/services/shopping_cart_backend
+    volumes:
+      - ./src/services/shopping_cart_backend:/app/src/services/shopping_cart_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+  # Inventory Backend - FastAPI
+  inventory:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8004:8000"
+    container_name: pos_inventory_backend
+    working_dir: /app/src/services/inventory_backend
+    volumes:
+      - ./src/services/inventory_backend:/app/src/services/inventory_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+  # Order History Backend - FastAPI
+  orders:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8005:8000"
+    container_name: pos_orders_backend
+    working_dir: /app/src/services/order_history_backend
+    volumes:
+      - ./src/services/order_history_backend:/app/src/services/order_history_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+  # Checkout Backend - FastAPI
+  checkout:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8006:8000"
+    container_name: pos_checkout_backend
+    working_dir: /app/src/services/checkout_backend
+    volumes:
+      - ./src/services/checkout_backend:/app/src/services/checkout_backend
+    environment:
+      - PORT=8000
+    networks:
+      - pos_network
+
+networks:
+  pos_network:
+    driver: bridge
